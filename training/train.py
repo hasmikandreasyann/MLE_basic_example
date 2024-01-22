@@ -1,29 +1,23 @@
-"""
-This script prepares the data, runs the training, and saves the model for the Iris dataset.
-"""
+import sys
 import argparse
 import os
-import sys
-import pickle
 import json
 import logging
 import pandas as pd
 import time
 from datetime import datetime
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from sklearn.datasets import load_iris
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
-
-# Comment this lines if you have problems with MLFlow installation
-import mlflow
-mlflow.autolog()
 
 # Adds the root directory to system path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(ROOT_DIR))
 
-CONF_FILE = "settings.json"
+CONF_FILE = "settings.json" 
 
 from utils import get_project_dir, configure_logging
 
@@ -35,53 +29,61 @@ with open(CONF_FILE, "r") as file:
 DATA_DIR = get_project_dir(conf['general']['data_dir'])
 MODEL_DIR = get_project_dir(conf['general']['models_dir'])
 
-# Initializes parser for command line arguments
-parser = argparse.ArgumentParser()
-parser.add_argument("--model_path", 
-                    help="Specify the path for the output model")
+class SimpleClassifier(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(SimpleClassifier, self).__init__()
+        self.fc = nn.Linear(input_size, output_size)
 
-
-class DataProcessor():
-    def __init__(self) -> None:
-        pass
-
-    def prepare_data(self) -> pd.DataFrame:
-        logging.info("Preparing Iris dataset for training...")
-        iris = load_iris()
-        df = pd.DataFrame(data=iris.data, columns=iris.feature_names)
-        df['target'] = iris.target
-        return df
-
+    def forward(self, x):
+        x = self.fc(x)
+        return x
 
 class Training():
-    def __init__(self) -> None:
-        self.model = DecisionTreeClassifier(random_state=conf['general']['random_state'])
+    def __init__(self, input_size, output_size) -> None:
+        self.model = SimpleClassifier(input_size, output_size)
+        self.criterion = nn.CrossEntropyLoss()
+        self.optimizer = optim.SGD(self.model.parameters(), lr=0.01)
 
-    def run_training(self, df: pd.DataFrame, out_path: str = None, test_size: float = 0.33) -> None:
+    def run_training(self, train_loader, test_loader, out_path: str = None, epochs: int = 10) -> None:
         logging.info("Running training...")
-        X_train, X_test, y_train, y_test = self.data_split(df, test_size=test_size)
         start_time = time.time()
-        self.train(X_train, y_train)
+
+        for epoch in range(epochs):
+            self.model.train()
+            for inputs, labels in train_loader:
+                self.optimizer.zero_grad()
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, labels)
+                loss.backward()
+                self.optimizer.step()
+
+            # Print the loss for each epoch
+            logging.info(f'Epoch {epoch + 1}/{epochs}, Loss: {loss.item()}')
+
         end_time = time.time()
         logging.info(f"Training completed in {end_time - start_time} seconds.")
-        self.test(X_test, y_test)
+
+        # Evaluate the model on the test set
+        self.test(test_loader)
+
+        # Save the trained model
         self.save(out_path)
 
-    def data_split(self, df: pd.DataFrame, test_size: float = 0.33) -> tuple:
-        logging.info("Splitting data into training and test sets...")
-        return train_test_split(df.drop('target', axis=1), df['target'], test_size=test_size, 
-                                random_state=conf['general']['random_state'])
-    
-    def train(self, X_train: pd.DataFrame, y_train: pd.DataFrame) -> None:
-        logging.info("Training the model...")
-        self.model.fit(X_train, y_train)
-
-    def test(self, X_test: pd.DataFrame, y_test: pd.DataFrame) -> float:
+    def test(self, test_loader) -> None:
         logging.info("Testing the model...")
-        y_pred = self.model.predict(X_test)
-        res = f1_score(y_test, y_pred, average='weighted')  # F1 score for multiclass classification
-        logging.info(f"f1_score: {res}")
-        return res
+        self.model.eval()
+        all_preds = []
+        all_labels = []
+
+        with torch.no_grad():
+            for inputs, labels in test_loader:
+                outputs = self.model(inputs)
+                _, preds = torch.max(outputs, 1)
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
+
+        f1 = f1_score(all_labels, all_preds, average='weighted')
+        logging.info(f"f1_score: {f1}")
 
     def save(self, path: str) -> None:
         logging.info("Saving the model...")
@@ -89,23 +91,43 @@ class Training():
             os.makedirs(MODEL_DIR)
 
         if not path:
-            path = os.path.join(MODEL_DIR, datetime.now().strftime(conf['general']['datetime_format']) + '_iris.pickle')
+            path = os.path.join(MODEL_DIR, datetime.now().strftime(conf['general']['datetime_format']) + '_iris.pth')
         else:
             path = os.path.join(MODEL_DIR, path)
 
-        with open(path, 'wb') as f:
-            pickle.dump(self.model, f)
-
+        torch.save(self.model.state_dict(), path)
 
 def main():
     configure_logging()
 
-    data_proc = DataProcessor()
-    tr = Training()
+    # Print loaded configuration for debugging
+    logging.info("Loaded Configuration: {}".format(json.dumps(conf, indent=4)))
 
-    df = data_proc.prepare_data()
-    tr.run_training(df, test_size=conf['train']['test_size'])
+    # Prepare data (assuming you have a DataLoader for training and testing)
+    input_size = 4  # Change this based on the number of features in your dataset
+    output_size = 3  # Change this based on the number of classes in your dataset
 
+    # Example DataLoader setup using Iris dataset
+    iris = load_iris()
+    X = torch.FloatTensor(iris.data)
+    y = torch.LongTensor(iris.target)
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=conf['train']['test_size'], random_state=conf['general']['random_state'])
+
+    train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
+    test_dataset = torch.utils.data.TensorDataset(X_test, y_test)
+
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False)
+
+    # Use a default value (e.g., 10) for 'epochs' if it's not specified in the configuration file
+    epochs = conf['train'].get('epochs', 10)
+
+    tr = Training(input_size, output_size)
+    tr.run_training(train_loader, test_loader, epochs=epochs)
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()

@@ -32,6 +32,23 @@ class SimpleClassifier(nn.Module):
         x = self.fc(x)
         return x
     
+    def load_state_dict(self, state_dict):
+        self.fc.load_state_dict(state_dict)
+    
+def predict_results(model: SimpleClassifier, infer_data: pd.DataFrame) -> pd.DataFrame:
+    """Predict the results and join them with the infer_data."""
+    model.eval()
+
+    # Convert DataFrame to PyTorch tensor
+    infer_data_tensor = torch.FloatTensor(infer_data.values)
+
+    with torch.no_grad():
+        outputs = model(infer_data_tensor)
+        _, preds = torch.max(outputs, 1)
+
+    infer_data['results'] = preds.cpu().numpy()
+    return infer_data
+    
 def save_model(model, path):
     torch.save(model.state_dict(), path)
 
@@ -140,9 +157,9 @@ class Training():
             os.makedirs(MODEL_DIR)
 
         try:
-            path = os.path.join(MODEL_DIR, datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_iris.pickle')
+            path = os.path.join(MODEL_DIR, datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_iris.pth')
             with open(path, 'wb') as f:
-                pickle.dump(self.model, f)
+                torch.save(self.model.state_dict(), f)
 
         except Exception as e:
             logging.error(f"An error occurred during model saving: {str(e)}")

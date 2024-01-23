@@ -2,18 +2,27 @@ import argparse
 import json
 import logging
 import os
+import pickle
+import sys
 from datetime import datetime
 import pandas as pd
-from utils import get_project_dir, configure_logging
-from training.train import SimpleClassifier, load_model 
+from sklearn.tree import DecisionTreeClassifier
+from training.train import SimpleClassifier
 
 # Adds the root directory to system path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(ROOT_DIR, "..", "training")))  # Adjust the path accordingly
+sys.path.append(os.path.dirname(ROOT_DIR))
+
+CONF_FILE = "settings.json"
+
+from utils import get_project_dir, configure_logging
 
 # Loads configuration settings from JSON
 with open(CONF_FILE, "r") as file:
     conf = json.load(file)
+
+# ... rest of the script ...
+
 
 # Defines paths
 DATA_DIR = get_project_dir(conf['general']['data_dir'])
@@ -33,18 +42,18 @@ def get_latest_model_path() -> str:
     latest = None
     for (dirpath, dirnames, filenames) in os.walk(MODEL_DIR):
         for filename in filenames:
-            if not latest or datetime.strptime(latest, conf['general']['datetime_format'] + '_iris.pth') < \
-                    datetime.strptime(filename, conf['general']['datetime_format'] + '_iris.pth'):
+            if not latest or datetime.strptime(latest, conf['general']['datetime_format'] + '_iris.pickle') < \
+                    datetime.strptime(filename, conf['general']['datetime_format'] + '_iris.pickle'):
                 latest = filename
     return os.path.join(MODEL_DIR, latest)
 
-def get_model_by_path(path: str, input_size: int, output_size: int) -> SimpleClassifier:
+def get_model_by_path(path: str) -> DecisionTreeClassifier:
     """Loads and returns the specified model"""
     try:
-        model = SimpleClassifier(input_size, output_size)  # Initialize an instance of SimpleClassifier
-        load_model(model, path)
-        logging.info(f'Path of the model: {path}')
-        return model
+        with open(path, 'rb') as f:
+            model = pickle.load(f)
+            logging.info(f'Path of the model: {path}')
+            return model
     except Exception as e:
         logging.error(f'An error occurred while loading the model: {e}')
         sys.exit(1)
@@ -58,10 +67,9 @@ def get_inference_data(path: str) -> pd.DataFrame:
         logging.error(f"An error occurred while loading inference data: {e}")
         sys.exit(1)
 
-
-def predict_results(model: SimpleClassifier, infer_data: pd.DataFrame) -> pd.DataFrame:
-    """Predict the results and join them with the infer_data"""
-    results = model.predict(infer_data.drop('target', axis=1))
+def predict_results(model: DecisionTreeClassifier, infer_data: pd.DataFrame) -> pd.DataFrame:
+    """Predict de results and join it with the infer_data"""
+    results = model.predict(infer_data)
     infer_data['results'] = results
     return infer_data
 
@@ -70,11 +78,10 @@ def store_results(results: pd.DataFrame, path: str = None) -> None:
     if not path:
         if not os.path.exists(RESULTS_DIR):
             os.makedirs(RESULTS_DIR)
-        path = datetime.now().strftime(conf['general']['datetime_format']) + '_iris_results.csv'
+        path = datetime.now().strftime(conf['general']['datetime_format']) + '.csv'
         path = os.path.join(RESULTS_DIR, path)
     pd.DataFrame(results).to_csv(path, index=False)
     logging.info(f'Results saved to {path}')
-
 
 def main():
     """Main function"""
@@ -88,7 +95,6 @@ def main():
     store_results(results, args.out_path)
 
     logging.info(f'Prediction results: {results}')
-
 
 if __name__ == "__main__":
     main()

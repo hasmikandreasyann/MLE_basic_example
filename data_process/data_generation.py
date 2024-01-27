@@ -19,7 +19,6 @@ DATA_DIR = os.path.abspath(os.path.join(ROOT_DIR, '../data'))
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
-# Change to CONF_FILE = "settings.json" if you have problems with env variables
 CONF_FILE = "settings.json"
 
 # Load configuration settings from JSON
